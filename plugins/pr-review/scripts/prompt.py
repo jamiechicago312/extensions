@@ -69,8 +69,10 @@ Review the PR changes below and identify issues that need to be addressed.
 - **Commit ID**: {commit_id}
 
 {review_context_section}{evidence_requirements_section}
+{files_manifest}
+## Patches
 
-## Git Diff
+The fenced block below contains the per-file patches. Individual patches may be **abbreviated** (look for `[patch abbreviated: ...]`) or **omitted** (look for `[patch omitted: ...]`) when they exceed the per-file or total budget. Files that appear in the manifest above but whose patch is missing or short here are still present in the PR — read the file from the workspace to inspect them. Do not flag them as missing from the PR.
 
 ```diff
 {diff}
@@ -162,6 +164,7 @@ def format_prompt(
     pr_number: str,
     commit_id: str,
     diff: str,
+    files_manifest: str = "",
     review_context: str = "",
     require_evidence: bool = False,
     use_sub_agents: bool = False,
@@ -212,6 +215,7 @@ def format_prompt(
         commit_id=commit_id,
         review_context_section=review_context_section,
         evidence_requirements_section=evidence_requirements_section,
+        files_manifest=files_manifest,
         diff=diff,
     )
 

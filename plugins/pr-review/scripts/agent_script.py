@@ -88,8 +88,12 @@ from prompt import FILE_REVIEWER_SKILL, format_prompt  # noqa: E402
 
 logger = get_logger(__name__)
 
-# Maximum total diff size
+# Maximum total size of all patches combined in the prompt
 MAX_TOTAL_DIFF = 100000
+
+# Maximum size for a single file's patch body. Prevents a single huge file
+# (e.g. a regenerated lockfile) from starving smaller files' patches.
+MAX_PER_FILE_PATCH = 8000
 
 # Maximum size for review context to avoid overwhelming the prompt
 # Keeps context under ~7500 tokens (assuming ~4 chars/token average)
@@ -657,56 +661,188 @@ def get_pr_review_context(pr_number: str) -> str:
     return format_review_context(reviews, threads)
 
 
-def get_pr_diff_via_github_api(pr_number: str) -> str:
-    """Fetch the PR diff exactly as GitHub renders it.
+def get_pr_files(pr_number: str) -> list[dict[str, Any]]:
+    """Fetch every file in the PR via the `/pulls/{n}/files` REST endpoint.
 
-    Uses the GitHub REST API "Get a pull request" endpoint with an `Accept`
-    header requesting diff output. This avoids depending on local git refs
-    (often stale/missing in `pull_request_target` checkouts).
+    Returns structured per-file metadata (filename, status, +/- counts) plus
+    each file's `patch` text. Paginates with `per_page=100` until the page
+    is short or empty. GitHub caps the response at 3000 files; review of
+    larger PRs is out of scope.
     """
     repo = _get_required_env("REPO_NAME")
-    token = _get_required_env("GITHUB_TOKEN")
-
-    url = f"https://api.github.com/repos/{repo}/pulls/{pr_number}"
-    request = urllib.request.Request(url)
-    request.add_header("Accept", "application/vnd.github.v3.diff")
-    request.add_header("Authorization", f"Bearer {token}")
-    request.add_header("X-GitHub-Api-Version", "2022-11-28")
-
-    try:
-        with urllib.request.urlopen(request, timeout=60) as response:
-            data = response.read()
-    except urllib.error.HTTPError as e:
-        details = (e.read() or b"").decode("utf-8", errors="replace").strip()
-        raise RuntimeError(
-            f"GitHub diff API request failed: HTTP {e.code} {e.reason}. {details}"
-        ) from e
-    except urllib.error.URLError as e:
-        raise RuntimeError(f"GitHub diff API request failed: {e.reason}") from e
-
-    return data.decode("utf-8", errors="replace")
+    files: list[dict[str, Any]] = []
+    page = 1
+    while True:
+        url = (
+            f"/repos/{repo}/pulls/{pr_number}/files"
+            f"?per_page=100&page={page}"
+        )
+        page_files = _call_github_api(url)
+        if not isinstance(page_files, list) or not page_files:
+            break
+        files.extend(page_files)
+        if len(page_files) < 100:
+            break
+        page += 1
+    return files
 
 
-def truncate_text(diff_text: str, max_total: int = MAX_TOTAL_DIFF) -> str:
-    if len(diff_text) <= max_total:
-        return diff_text
-    total_chars = len(diff_text)
-    return (
-        diff_text[:max_total]
-        + f"\n\n... [total diff truncated, {total_chars:,} chars total, "
-        + f"showing first {max_total:,}] ..."
+def _format_file_stats(file: dict[str, Any]) -> str:
+    """Format adds/deletes for a single file: `+12/-3`, `+24`, `-7`, or ``."""
+    additions = file.get("additions", 0) or 0
+    deletions = file.get("deletions", 0) or 0
+    if additions and deletions:
+        return f"+{additions}/-{deletions}"
+    if additions:
+        return f"+{additions}"
+    if deletions:
+        return f"-{deletions}"
+    return ""
+
+
+def _format_file_status(file: dict[str, Any]) -> str:
+    """Map GitHub's status field to a short bracketed tag."""
+    status = (file.get("status") or "").lower()
+    if status == "renamed":
+        previous = file.get("previous_filename") or "?"
+        return f"[renamed from {previous}]"
+    if status in {"added", "modified", "removed", "copied", "changed"}:
+        return f"[{status}]"
+    return f"[{status}]" if status else ""
+
+
+def format_files_manifest(files: list[dict[str, Any]]) -> str:
+    """Build the 'Files Changed' manifest shown before the patch block.
+
+    Invariant: every file in `files` appears exactly once in the output,
+    regardless of patch size or budget. The patch block may abbreviate or
+    omit individual patches; the manifest never does.
+    """
+    if not files:
+        return "## Files Changed\n\n_(no files reported by GitHub)_\n"
+
+    total_additions = sum((f.get("additions") or 0) for f in files)
+    total_deletions = sum((f.get("deletions") or 0) for f in files)
+    header = (
+        f"## Files Changed ({len(files)} files, "
+        f"+{total_additions} / -{total_deletions})\n\n"
+        "All files in the PR are listed here. If a file's patch is missing "
+        "or abbreviated in the Patches section below, read the file from the "
+        "workspace (it is checked out) rather than treating it as absent.\n"
     )
 
+    lines = [header]
+    for file in files:
+        path = file.get("filename", "?")
+        status = _format_file_status(file)
+        stats = _format_file_stats(file)
+        suffix_parts: list[str] = []
+        if not file.get("patch") and (
+            file.get("additions") or file.get("deletions")
+        ):
+            suffix_parts.append("(binary or unavailable, no patch)")
+        bits = [f"- `{path}`", status, stats, *suffix_parts]
+        lines.append(" ".join(b for b in bits if b))
 
-def get_truncated_pr_diff() -> str:
-    """Get the PR diff with truncation.
+    return "\n".join(lines) + "\n"
 
-    This uses GitHub as the source of truth so the review matches the PR's
-    "Files changed" view.
+
+def _abbreviate_patch(patch: str, limit: int) -> tuple[str, bool]:
+    """Truncate a single file's patch to `limit` chars on a line boundary.
+
+    Returns `(text, truncated)`. The truncated text ends on a complete line
+    so the closing `[patch abbreviated]` marker isn't dangling mid-line.
     """
-    pr_number = _get_required_env("PR_NUMBER")
-    diff_text = get_pr_diff_via_github_api(pr_number)
-    return truncate_text(diff_text)
+    if len(patch) <= limit:
+        return patch, False
+    cut = patch.rfind("\n", 0, limit)
+    if cut <= 0:
+        cut = limit
+    return patch[:cut], True
+
+
+def format_patches(
+    files: list[dict[str, Any]],
+    max_total: int = MAX_TOTAL_DIFF,
+    max_per_file: int = MAX_PER_FILE_PATCH,
+) -> str:
+    """Assemble per-file patches into a single diff block within budget.
+
+    Every file gets at least its diff header. Patches are taken from each
+    file's `patch` field (the same text the raw-diff endpoint returns) and
+    abbreviated to `max_per_file` chars; if the running total would exceed
+    `max_total`, later files get a header-only stub. Each abbreviation is
+    annotated inline so the agent can tell "I was given a short patch" from
+    "no patch was given" — both are visible.
+    """
+    sections: list[str] = []
+    total = 0
+    for file in files:
+        path = file.get("filename", "?")
+        previous = file.get("previous_filename")
+        status = (file.get("status") or "").lower()
+        header_lines = [f"diff --git a/{previous or path} b/{path}"]
+        if status == "renamed":
+            header_lines.append(f"rename from {previous}")
+            header_lines.append(f"rename to {path}")
+        if status == "added":
+            header_lines.append("new file")
+        elif status == "removed":
+            header_lines.append("deleted file")
+        header = "\n".join(header_lines) + "\n"
+
+        patch = file.get("patch") or ""
+        remaining_budget = max_total - total
+        if remaining_budget <= len(header):
+            sections.append(
+                header
+                + f"[patch omitted: total budget of {max_total:,} chars reached; "
+                f"read `{path}` from the workspace to inspect]\n"
+            )
+            total += len(sections[-1])
+            continue
+
+        if not patch:
+            note = (
+                "[no patch available — likely a binary file, rename without "
+                "content change, or otherwise unrepresentable as text]\n"
+                if status not in {"added", "removed"}
+                or (file.get("additions") or file.get("deletions"))
+                else ""
+            )
+            sections.append(header + note)
+            total += len(sections[-1])
+            continue
+
+        per_file_cap = min(max_per_file, remaining_budget - len(header))
+        truncated_patch, was_truncated = _abbreviate_patch(patch, per_file_cap)
+        section = header + truncated_patch
+        if not section.endswith("\n"):
+            section += "\n"
+        if was_truncated:
+            section += (
+                f"[patch abbreviated: {len(patch):,} chars total, showing first "
+                f"{len(truncated_patch):,}; read `{path}` from the workspace "
+                "to inspect the rest]\n"
+            )
+        sections.append(section)
+        total += len(section)
+
+    return "\n".join(sections)
+
+
+def get_pr_diff_payload(pr_number: str) -> tuple[str, str]:
+    """Fetch PR files and produce `(manifest, patches)` for the prompt.
+
+    The manifest is rendered as markdown above the patch fence so the agent
+    always sees the complete file list, even when individual patches are
+    abbreviated. The patches string is what goes inside the ```diff fence.
+    """
+    files = get_pr_files(pr_number)
+    logger.info(f"Fetched {len(files)} files for PR #{pr_number}")
+    manifest = format_files_manifest(files)
+    patches = format_patches(files)
+    return manifest, patches
 
 
 def get_head_commit_sha(repo_dir: Path | None = None) -> str:
@@ -798,17 +934,19 @@ def validate_environment() -> dict[str, Any]:
     }
 
 
-def fetch_pr_context(pr_number: str) -> tuple[str, str, str]:
-    """Fetch PR diff, commit SHA, and review context.
-
-    Args:
-        pr_number: The PR number
+def fetch_pr_context(pr_number: str) -> tuple[str, str, str, str]:
+    """Fetch PR manifest, patches, commit SHA, and review context.
 
     Returns:
-        Tuple of (diff, commit_id, review_context)
+        Tuple of (manifest, patches, commit_id, review_context).
+        `manifest` is the markdown 'Files Changed' block; `patches` is the
+        per-file diff text to render inside the ```diff fence.
     """
-    pr_diff = get_truncated_pr_diff()
-    logger.info(f"Got PR diff with {len(pr_diff)} characters")
+    manifest, patches = get_pr_diff_payload(pr_number)
+    logger.info(
+        f"Got PR diff: manifest {len(manifest)} chars, "
+        f"patches {len(patches)} chars"
+    )
 
     commit_id = get_head_commit_sha()
     logger.info(f"HEAD commit SHA: {commit_id}")
@@ -819,7 +957,7 @@ def fetch_pr_context(pr_number: str) -> tuple[str, str, str]:
     else:
         logger.info("No previous review context found")
 
-    return pr_diff, commit_id, review_context
+    return manifest, patches, commit_id, review_context
 
 
 def _create_file_reviewer_agent(llm: LLM) -> Agent:
@@ -1087,7 +1225,9 @@ def main():
     logger.info(f"Agent kind: {config['agent_kind']}")
 
     try:
-        pr_diff, commit_id, review_context = fetch_pr_context(pr_info["number"])
+        manifest, patches, commit_id, review_context = fetch_pr_context(
+            pr_info["number"]
+        )
 
         skill_trigger = "/codereview"
         logger.info(f"Using skill trigger: {skill_trigger}")
@@ -1101,7 +1241,8 @@ def main():
             head_branch=pr_info.get("head_branch", "N/A"),
             pr_number=pr_info["number"],
             commit_id=commit_id,
-            diff=pr_diff,
+            diff=patches,
+            files_manifest=manifest,
             review_context=review_context,
             require_evidence=require_evidence,
             use_sub_agents=use_sub_agents,
