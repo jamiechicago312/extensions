@@ -50,7 +50,7 @@ See [`mcps/README.md`](mcps/README.md) and [`automations/README.md`](automations
 ## Extensions Catalog
 
 <!-- BEGIN AUTO-GENERATED CATALOG -->
-This repository contains **2 marketplace(s)** with **49 extensions** (39 skills, 10 plugins).
+This repository contains **2 marketplace(s)** with **50 extensions** (40 skills, 10 plugins).
 
 ### large-codebase
 
@@ -69,7 +69,7 @@ OpenHands skills for interacting, improving, and refactoring large codebases
 
 Official skills and plugins for OpenHands — the open-source AI software engineer.
 
-**45 extensions** (37 skills, 8 plugins)
+**46 extensions** (38 skills, 8 plugins)
 
 | Name | Type | Description | Commands |
 |------|------|-------------|----------|
@@ -90,6 +90,7 @@ Official skills and plugins for OpenHands — the open-source AI software engine
 | frontend-design | skill | Create distinctive, production-grade frontend interfaces with high design quality. Use this skill when the user asks ... | — |
 | github | skill | Interact with GitHub repositories, pull requests, issues, and workflows using the GITHUB_TOKEN environment variable a... | — |
 | github-pr-review | skill | Post structured PR reviews to GitHub with inline comments/suggestions in a single API call. | `/github-pr-review` |
+| github-repo-monitor | skill | Create a cron automation that polls a GitHub repository for issue and PR comments containing a configurable trigger p... | — |
 | gitlab | skill | Interact with GitLab repositories, merge requests, and APIs using the GITLAB_TOKEN environment variable. Use when wor... | — |
 | iterate | skill | Iterate on a GitHub pull request — drive it through CI, code review, and QA until merge-ready. Monitors state, fixes ... | `/iterate`, `/verify`, `/babysit` |
 | jupyter | skill | Read, modify, execute, and convert Jupyter notebooks programmatically. Use when working with .ipynb files for data sc... | — |

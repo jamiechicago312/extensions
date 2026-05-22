@@ -309,8 +309,18 @@ def _get_agent_dict(agent_url: str, api_key: str) -> dict:
             data = json.loads(r.read())
     except urllib.error.HTTPError as exc:
         raise RuntimeError(f"GET /api/settings failed: {exc.code}") from exc
-    llm = data.get("agent_settings", {}).get("llm", {})
-    return {"kind": "Agent", "llm": llm}
+    agent_settings = data.get("agent_settings", {})
+    llm = agent_settings.get("llm", {})
+    # settings["agent_settings"]["agent"] reflects the full-app agent registry
+    # (e.g. "CodeActAgent", "BrowsingAgent").  The automation SDK is a separate
+    # runtime whose only valid kind is "Agent" — never forward that value.
+    return {
+        "kind": "Agent",
+        "llm": llm,
+        # "terminal" and "file_editor" are the runtime-registered tool names.
+        # Without an explicit tools list the SDK Agent defaults to think+finish only.
+        "tools": [{"name": "terminal"}, {"name": "file_editor"}],
+    }
 
 
 def create_conversation(agent_url: str, api_key: str, initial_message: str) -> str:
