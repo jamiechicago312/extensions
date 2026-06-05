@@ -45,6 +45,16 @@ React logo components are isolated behind a separate export so data-only consume
 import { INTEGRATION_LOGOS } from "@openhands/extensions/integrations/logos";
 ```
 
+The package ships the whole repo, so the `skills/`, `plugins/`, and `marketplaces/` trees are available from the installed package. Resolve content files to a path, or import JSON manifests directly:
+
+```js
+// .md / .py / etc.: resolve to a path, then read with fs
+const skillPath = import.meta.resolve("@openhands/extensions/skills/code-review/SKILL.md");
+
+// .json: import directly
+import marketplace from "@openhands/extensions/marketplaces/openhands-extensions.json" with { type: "json" };
+```
+
 See [`integrations/README.md`](integrations/README.md), [`automations/README.md`](automations/README.md), and [`MIGRATION.md`](MIGRATION.md) for catalog-specific details.
 
 ## Extensions Catalog
