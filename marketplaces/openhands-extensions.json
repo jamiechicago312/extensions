@@ -663,6 +663,20 @@
       ]
     },
     {
+      "name": "meeting-transcript-summary",
+      "source": "./skills/meeting-transcript-summary",
+      "description": "Summarize a meeting transcript from a publicly accessible Google Doc into highlights, decisions, action items, blockers, and open questions inside an OpenHands chat.",
+      "category": "productivity",
+      "keywords": [
+        "meeting",
+        "transcript",
+        "google-docs",
+        "summary",
+        "notes",
+        "action-items"
+      ]
+    },
+    {
       "name": "research-brief",
       "source": "./skills/research-brief",
       "description": "Create a recurring automation that researches a topic using Tavily web search and publishes a structured brief to Notion with executive summary, key findings, implications, and source citations.",
