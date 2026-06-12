@@ -125,6 +125,7 @@ Official skills and plugins for OpenHands — the open-source AI software engine
 | prd | skill | Generate a Product Requirements Document (PRD) for a new feature through an interactive clarifying-question workflow.... | `/prd` |
 | qa-changes | plugin | Validate pull request changes by actually running the code — setting up the environment, exercising changed behavior,... | — |
 | release-notes | plugin | Generate consistent, well-structured release notes from git history. Produces categorized changelog with breaking cha... | `/release-notes` |
+| meeting-transcript-summary | skill | Summarize a meeting transcript from a publicly accessible Google Doc into highlights, decisions, action items, blocke... | — |
 | research-brief | skill | Create a recurring automation that researches a topic using Tavily web search and publishes a structured brief to Not... | `/research-brief:setup` |
 | security | skill | Security best practices for secure coding, authentication, authorization, and data protection. Use when developing fe... | — |
 | skill-creator | skill | Guide for creating effective skills. This skill should be used when users want to create a new skill (or update an ex... | — |
