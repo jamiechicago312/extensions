@@ -199,11 +199,14 @@ constant substitutions near the top of the file:
 | `ALLOWED_GITHUB_LOGINS = ["<TOKEN_OWNER>"]` | `ALLOWED_GITHUB_LOGINS = {allowed_logins_list}` |
 | `DEFAULT_OPENHANDS_URL = "http://localhost:8000"` | `DEFAULT_OPENHANDS_URL = "{url}"` (keep default if the user has no preference) |
 
-Write the customised script to a workspace-local build directory such as `.agent_tmp/github-monitor-build/main.py`. Use the file editor or a short Python helper so the path works on Windows, macOS, and Linux.
+Write the customised script to a build directory under the system temporary
+directory, for example `Path(tempfile.gettempdir()) / "github-monitor-build" / "main.py"`
+in Python. Use the file editor or a short Python helper so the path works on
+Windows, macOS, and Linux without leaving temp files in the repository.
 
 Validate syntax before packaging using the current environment's Python launcher (`python`, `python3`, or `py`):
 ```text
-<python-launcher> -m py_compile .agent_tmp/github-monitor-build/main.py
+<python-launcher> -m py_compile <build-dir>/main.py
 ```
 
 Fix any syntax errors before proceeding.
@@ -218,88 +221,26 @@ block in your system context:
 If no Automation backend is listed in `<RUNTIME_SERVICES>`, stop and tell
 the user to start the full automation stack.
 
-Package and upload with Python so the flow stays cross-platform:
+Prefer the reusable helper script at `scripts/package_upload.py`. It creates
+the tarball under the system temporary directory and prints JSON containing the
+remote `tarball_path` plus the local tarball path for debugging.
 
-```python
-import json
-import os
-import tarfile
-import urllib.request
-from pathlib import Path
-
-build_dir = Path(".agent_tmp/github-monitor-build")
-tarball_path = Path(".agent_tmp/github-monitor.tar.gz")
-openhands_host = "<automation-url-from-runtime-services>".rstrip("/")
-api_key = os.environ["OPENHANDS_AUTOMATION_API_KEY"]
-
-with tarfile.open(tarball_path, "w:gz") as tar:
-    tar.add(build_dir, arcname=".")
-
-upload_request = urllib.request.Request(
-    f"{openhands_host}/api/automation/v1/uploads?name=github-repo-monitor",
-    data=tarball_path.read_bytes(),
-    headers={
-        "X-Session-API-Key": api_key,
-        "Content-Type": "application/gzip",
-    },
-    method="POST",
-)
-with urllib.request.urlopen(upload_request) as response:
-    upload_data = json.load(response)
-
-TARBALL_PATH = upload_data["tarball_path"]
-print(TARBALL_PATH)
+```text
+<python-launcher> skills/github-repo-monitor/scripts/package_upload.py --build-dir <build-dir> --openhands-host <automation-url-from-runtime-services> --upload-name github-repo-monitor
 ```
 
-Record the returned `TARBALL_PATH`.
+Record the returned `tarball_path` as `TARBALL_PATH`.
 
 ### Step 9  -  Create the automation
 
-Use the same shell-neutral pattern: write the request body as JSON, then POST it with Python or another HTTP client that matches the current environment.
+Set `entrypoint` to the same launcher that worked in Step 7 (for example `python main.py`, `python3 main.py`, or `py -3 main.py`). Then call the reusable helper script at `scripts/create_automation.py`:
 
-Request body:
-```json
-{
-  "name": "GitHub Monitor: {owner}/{repo}",
-  "trigger": {"type": "cron", "schedule": "{cron_schedule}"},
-  "tarball_path": "<TARBALL_PATH>",
-  "entrypoint": "<python-launcher> main.py",
-  "timeout": 55
-}
+```text
+<python-launcher> skills/github-repo-monitor/scripts/create_automation.py --openhands-host <automation-url-from-runtime-services> --name "GitHub Monitor: {owner}/{repo}" --schedule "{cron_schedule}" --tarball-path <TARBALL_PATH> --entrypoint "<python-launcher> main.py" --timeout 55
 ```
 
-Set `entrypoint` to the same launcher that worked in Step 7 (for example `python main.py`, `python3 main.py`, or `py -3 main.py`).
-
-Example Python snippet:
-```python
-import json
-import os
-import urllib.request
-
-openhands_host = "<automation-url-from-runtime-services>".rstrip("/")
-api_key = os.environ["OPENHANDS_AUTOMATION_API_KEY"]
-payload = {
-    "name": "GitHub Monitor: {owner}/{repo}",
-    "trigger": {"type": "cron", "schedule": "{cron_schedule}"},
-    "tarball_path": "<TARBALL_PATH>",
-    "entrypoint": "<python-launcher> main.py",
-    "timeout": 55,
-}
-request = urllib.request.Request(
-    f"{openhands_host}/api/automation/v1",
-    data=json.dumps(payload).encode(),
-    headers={
-        "X-Session-API-Key": api_key,
-        "Content-Type": "application/json",
-    },
-    method="POST",
-)
-with urllib.request.urlopen(request) as response:
-    automation = json.load(response)
-print(json.dumps(automation, indent=2))
-```
-
-Record the returned `id`.
+Use shell-appropriate quoting for arguments that contain spaces. Record the
+returned `id`.
 
 ### Step 10  -  Confirm
 

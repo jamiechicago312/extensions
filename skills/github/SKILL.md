@@ -57,7 +57,7 @@ git push -u origin create-widget
 
 To resolve existing review threads programmatically:
 
-1. Get the thread IDs (replace `<OWNER>`, `<REPO>`, `<PR_NUMBER>`). Write the GraphQL body to a JSON file such as `.agent_tmp/review-threads.json` and call `gh api graphql --input <file>`:
+1. Get the thread IDs (replace `<OWNER>`, `<REPO>`, `<PR_NUMBER>`). Write the GraphQL body to a JSON file under the system temporary directory such as `<system-temp>/review-threads.json`, then call `gh api graphql --input <file>`:
 ```json
 {
   "query": "query { repository(owner: \"<OWNER>\", name: \"<REPO>\") { pullRequest(number: <PR_NUMBER>) { reviewThreads(first: 20) { nodes { id isResolved comments(first: 1) { nodes { body } } } } } } }"
@@ -79,10 +79,7 @@ To resolve existing review threads programmatically:
 ```
 
 4. Get the failed workflow run ID and rerun it:
-```bash
-# Find the run ID from the failed check URL, or use:
+```text
 gh run list --repo <OWNER>/<REPO> --branch <BRANCH> --limit 5
-
-# Rerun failed jobs
 gh run rerun <RUN_ID> --repo <OWNER>/<REPO> --failed
 ```

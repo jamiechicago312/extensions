@@ -17,7 +17,8 @@ This skill is activated by keywords:
 - **Supports event-based (webhook) or cron-based (polling) triggers**
 - **Configurable review tone (thorough, concise, friendly)**
 - **Auto-post or draft mode for human approval**
-- **Uses shell-neutral JSON request bodies so setup works across Windows, macOS, and Linux**
+- **Uses reusable helper scripts for packaging and automation creation**
+- **Keeps generated build files in the system temporary directory instead of the repository**
 
 ## Prerequisites
 
@@ -29,6 +30,12 @@ Ask OpenHands:
 
 > "Set up a PR review automation for my myorg/backend repo that posts
 > concise reviews when PRs are opened"
+
+## Helper Scripts
+
+- `scripts/main.py` — automation script template to customize before upload
+- `scripts/package_upload.py` — packages and uploads a prepared build directory
+- `scripts/create_automation.py` — creates the cron automation from the uploaded tarball
 
 ## See Also
 

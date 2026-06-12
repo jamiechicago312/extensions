@@ -26,7 +26,7 @@ Use the GitHub CLI (`gh`) with a JSON input file. The `GITHUB_TOKEN` is automati
 
 ### Step 1: Create a JSON file
 
-Write the review payload to a JSON file in the current workspace (for example `.agent_tmp/review.json`). Use the file editor or any shell-appropriate file-writing command.
+Write the review payload to a JSON file under the system temporary directory (for example `<system-temp>/review.json`). Use the file editor or any shell-appropriate file-writing command. Replace `<system-temp>` with an absolute path for the current OS temp directory.
 
 ```json
 {
@@ -53,7 +53,7 @@ Write the review payload to a JSON file in the current workspace (for example `.
 ### Step 2: Post the review
 
 ```text
-gh api -X POST repos/{owner}/{repo}/pulls/{pr_number}/reviews --input .agent_tmp/review.json
+gh api -X POST repos/{owner}/{repo}/pulls/{pr_number}/reviews --input <system-temp>/review.json
 ```
 
 ### Parameters
@@ -95,6 +95,16 @@ Start each comment with a priority label. **Minimize nits** — leave minor styl
 
 **Do NOT post 🟢 Nit or 🟢 Acceptable comments.** If code is fine, simply don't comment on it.
 
+**Example:**
+```
+🟠 Important: This function doesn't handle None, which could cause an AttributeError.
+
+```suggestion
+if user is None:
+    raise ValueError("User cannot be None")
+```
+```
+
 ## GitHub Suggestions
 
 For small code changes, use the suggestion syntax for one-click apply:
@@ -118,14 +128,14 @@ Use the file editor, your code editor's line numbers, or another shell-appropria
 If `gh` is unavailable, use any HTTP client that can POST the saved JSON file. Example:
 
 ```text
-curl -X POST -H "Authorization: token $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}/reviews --data-binary @.agent_tmp/review.json
+curl -X POST -H "Authorization: token $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" -H "Content-Type: application/json" https://api.github.com/repos/{owner}/{repo}/pulls/{pr_number}/reviews --data-binary @<system-temp>/review.json
 ```
 
 ## Summary
 
 1. Analyze the code and identify important issues (minimize nits)
-2. Write review data to a JSON file (for example `.agent_tmp/review.json`)
-3. Post **ONE** review using `gh api --input .agent_tmp/review.json`
+2. Write review data to a JSON file under the system temporary directory (for example `<system-temp>/review.json`)
+3. Post **ONE** review using `gh api --input <system-temp>/review.json`
 4. Use priority labels (🔴🟠🟡) on every comment
 5. Do NOT post comments for code that is acceptable — only comment when action is needed
 6. Use suggestion syntax for concrete code changes, but verify the resulting code first
