@@ -554,6 +554,20 @@
       ]
     },
     {
+      "name": "transcript",
+      "source": "./skills/transcript",
+      "description": "Save a pasted meeting transcript to a local text file without changing the current model/profile. Preserves the transcript verbatim, adds simple metadata, and returns the saved path.",
+      "category": "productivity",
+      "keywords": [
+        "transcript",
+        "meeting",
+        "granola",
+        "zoom",
+        "notes",
+        "file"
+      ]
+    },
+    {
       "name": "uv",
       "source": "./skills/uv",
       "description": "Common project, dependency, and environment operations using uv.",

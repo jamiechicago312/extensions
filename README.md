@@ -60,7 +60,7 @@ See [`integrations/README.md`](integrations/README.md), [`automations/README.md`
 ## Extensions Catalog
 
 <!-- BEGIN AUTO-GENERATED CATALOG -->
-This repository contains **2 marketplace(s)** with **57 extensions** (47 skills, 10 plugins).
+This repository contains **2 marketplace(s)** with **58 extensions** (48 skills, 10 plugins).
 
 ### large-codebase
 
@@ -79,7 +79,7 @@ OpenHands skills for interacting, improving, and refactoring large codebases
 
 Official skills and plugins for OpenHands — the open-source AI software engineer.
 
-**53 extensions** (45 skills, 8 plugins)
+**54 extensions** (46 skills, 8 plugins)
 
 | Name | Type | Description | Commands |
 |------|------|-------------|----------|
@@ -133,6 +133,7 @@ Official skills and plugins for OpenHands — the open-source AI software engine
 | ssh | skill | Establish and manage SSH connections to remote machines, including key generation, configuration, and file transfers.... | — |
 | swift-linux | skill | Install and configure Swift programming language on Debian Linux for server-side development. Use when building Swift... | — |
 | theme-factory | skill | Toolkit for styling artifacts with a theme. These artifacts can be slides, docs, reportings, HTML landing pages, etc.... | — |
+| transcript | skill | Save a pasted meeting transcript to a local text file without changing the current model/profile. Preserves the trans... | `/transcript` |
 | uv | skill | Common project, dependency, and environment operations using uv. | — |
 | vercel | skill | Deploy and manage applications on Vercel, including preview deployments and deployment protection. | — |
 | vulnerability-remediation | plugin | Automated security vulnerability scanning and AI-powered remediation. Scans repositories, skips when no issues found,... | — |
