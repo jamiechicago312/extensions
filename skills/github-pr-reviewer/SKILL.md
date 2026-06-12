@@ -1,22 +1,23 @@
 ---
 name: github-pr-reviewer
 description: >
-  Create an automation that reviews GitHub pull requests when they are opened
-  or updated. Inspects the diff, changed files, tests, and existing discussion
-  from GitHub, then posts a concise review highlighting risks, security
-  issues, missing tests, and next steps.
+  Create an automation that reviews GitHub pull requests when a configurable
+  trigger label is applied. Polls GitHub deterministically, starts one
+  OpenHands review conversation per label event, inspects full repository and
+  PR context, and posts the final review comment back to GitHub.
 triggers:
   - /pr-reviewer:setup
 ---
 
 # GitHub PR Reviewer Automation
 
-Create a cron automation that polls a GitHub repository, reviews each open
-pull request exactly once, and posts the AI review as a GitHub comment.
+Create a cron automation that watches a GitHub repository for pull requests
+with a review trigger label, starts an OpenHands review conversation once per
+label event, and posts the AI review as a GitHub comment.
 
-The automation script is fully deterministic: PR discovery, state tracking,
-and deduplication are handled in Python. The LLM is only invoked to write
-the review text for PRs not yet seen, never for orchestration.
+The automation script is deterministic: PR discovery, label-event tracking,
+state persistence, stale-result suppression, and GitHub comment posting are
+handled in Python. The LLM is invoked only for the review itself.
 
 ---
 
@@ -28,13 +29,13 @@ Verify that the following secret is set in **OpenHands Settings -> Secrets**:
 
 | Secret name | Token type | Minimum permissions |
 |---|---|---|
-| `GITHUB_PERSONAL_ACCESS_TOKEN` | Classic PAT | `repo` (private) or `public_repo` (public) |
-| `GITHUB_PERSONAL_ACCESS_TOKEN` | Fine-grained PAT | Pull requests: Read and Write |
+| `GITHUB_PERSONAL_ACCESS_TOKEN` | Classic PAT | `repo` for private repos or `public_repo` for public repos |
+| `GITHUB_PERSONAL_ACCESS_TOKEN` | Fine-grained PAT | Contents: Read, Metadata: Read, Pull requests: Read, Issues: Read and Write |
 
 Check with any shell-appropriate HTTP client or a short Python script. The
 important part is to call `GET https://api.github.com/user` with
-`Authorization: Bearer <token>` and read either the authenticated login or the
-error message.
+`Authorization: Bearer <token>` and inspect either the authenticated login or
+an error message.
 
 Example Python snippet:
 ```python
@@ -44,7 +45,10 @@ import urllib.request
 token = "<GITHUB_PERSONAL_ACCESS_TOKEN>"
 req = urllib.request.Request(
     "https://api.github.com/user",
-    headers={"Authorization": f"Bearer {token}"},
+    headers={
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+    },
 )
 with urllib.request.urlopen(req) as response:
     data = json.load(response)
@@ -59,7 +63,7 @@ If the token is missing or invalid, inform the user and stop.
 
 Follow these steps in order.
 
-### Step 1 - Verify GITHUB_PERSONAL_ACCESS_TOKEN
+### Step 1 - Verify `GITHUB_PERSONAL_ACCESS_TOKEN`
 
 Run the check above.
 
@@ -86,7 +90,10 @@ owner_repo = "{owner}/{repo}"
 token = "<GITHUB_PERSONAL_ACCESS_TOKEN>"
 req = urllib.request.Request(
     f"https://api.github.com/repos/{owner_repo}",
-    headers={"Authorization": f"Bearer {token}"},
+    headers={
+        "Authorization": f"Bearer {token}",
+        "Accept": "application/vnd.github+json",
+    },
 )
 with urllib.request.urlopen(req) as response:
     data = json.load(response)
@@ -98,7 +105,19 @@ else:
 
 Record `REPO = "{owner}/{repo}"`.
 
-### Step 3 - Collect review tone
+### Step 3 - Collect trigger label
+
+Ask: *"Which PR label should trigger a review?
+(Press Enter for the default: `openhands-review`.)"*
+
+Record the answer as `TRIGGER_LABEL`. If the label does not exist yet, tell the
+user that GitHub will still record the event once the label is created and
+applied to a PR.
+
+The automation reviews a PR when it sees the latest matching `labeled` event for
+that label. To request another review later, remove and re-apply the label.
+
+### Step 4 - Collect review tone
 
 Ask: *"What review tone should the reviewer use?
   1. Thorough (default) - comprehensive coverage of correctness, security, tests, style
@@ -109,15 +128,15 @@ Ask: *"What review tone should the reviewer use?
 Map the choice to `REVIEW_TONE`:
 
 | Answer | `REVIEW_TONE` | `REVIEW_STYLE_INSTRUCTIONS` |
-|--------|--------------|------------------------------|
+|---|---|---|
 | 1 / Enter | `"thorough"` | `""` |
 | 2 | `"concise"` | `""` |
 | 3 | `"friendly"` | `""` |
-| Custom text (e.g. "hostile pirate") | `"thorough"` | the custom text verbatim |
+| Custom text, e.g. `strict but kind` | `"thorough"` | the custom text verbatim |
 
-### Step 4 - Collect cron schedule
+### Step 5 - Collect cron schedule
 
-Ask: *"How often should the automation poll for new PRs?
+Ask: *"How often should the automation poll for labeled PRs?
 (Press Enter for the default: every 5 minutes.
 Use a cron expression for a different interval, e.g. `0 * * * *` = hourly)"*
 
@@ -125,19 +144,23 @@ Default: `*/5 * * * *`.
 
 Record as `CRON_SCHEDULE`.
 
-### Step 5 - Generate the automation script
+### Step 6 - Generate the automation script
 
-Read `scripts/main.py` from this skill's directory. Apply exactly four
-constant substitutions near the top of the file:
+Read `scripts/main.py` from this skill's directory. Apply exactly five constant
+substitutions near the top of the file:
 
 | Placeholder | Replace with |
 |---|---|
 | `REPO = "owner/repo"` | `REPO = "{owner_repo}"` |
+| `TRIGGER_LABEL = "openhands-review"` | `TRIGGER_LABEL = "{trigger_label}"` |
 | `REVIEW_TONE = "thorough"` | `REVIEW_TONE = "{review_tone}"` |
 | `REVIEW_STYLE_INSTRUCTIONS = ""` | `REVIEW_STYLE_INSTRUCTIONS = "{style_instructions}"` |
 | `DEFAULT_OPENHANDS_URL = "http://localhost:8000"` | leave unchanged unless the user has a preference |
 
-Write the customised script to a build directory under the system temporary
+Use a safe string writer such as `json.dumps(value)` when inserting user-provided
+repository names, labels, or style instructions into Python string literals.
+
+Write the customized script to a build directory under the system temporary
 directory, for example `Path(tempfile.gettempdir()) / "github-pr-reviewer-build" / "main.py"`
 in Python. Use the file editor or a short Python helper so the path works on
 Windows, macOS, and Linux without leaving temp files in the repository.
@@ -150,7 +173,7 @@ launcher (`python`, `python3`, or `py`):
 
 Fix any syntax errors before proceeding.
 
-### Step 6 - Package and upload
+### Step 7 - Package and upload
 
 Determine the Automation backend URL and auth from the `<RUNTIME_SERVICES>`
 block in your system context:
@@ -167,20 +190,20 @@ remote `tarball_path` plus the local tarball path for debugging.
 
 Record the returned `tarball_path` as `TARBALL_PATH`.
 
-### Step 7 - Register the automation
+### Step 8 - Register the automation
 
-Set `entrypoint` to the same launcher that worked in Step 5 (for example
+Set `entrypoint` to the same launcher that worked in Step 6 (for example
 `python main.py`, `python3 main.py`, or `py -3 main.py`). Then call the
 reusable helper script at `scripts/create_automation.py`:
 
 ```text
-<python-launcher> skills/github-pr-reviewer/scripts/create_automation.py --openhands-host <automation-url-from-runtime-services> --name "GitHub PR Reviewer: {owner}/{repo}" --schedule "{cron_schedule}" --tarball-path <TARBALL_PATH> --entrypoint "<python-launcher> main.py" --timeout 300
+<python-launcher> skills/github-pr-reviewer/scripts/create_automation.py --openhands-host <automation-url-from-runtime-services> --name "GitHub PR Reviewer: {owner}/{repo} label {trigger_label}" --schedule "{cron_schedule}" --tarball-path <TARBALL_PATH> --entrypoint "<python-launcher> main.py" --timeout 300
 ```
 
 Use shell-appropriate quoting for arguments that contain spaces. Record the
 returned `id`.
 
-### Step 8 - Confirm
+### Step 9 - Confirm
 
 Tell the user:
 
@@ -188,13 +211,14 @@ Tell the user:
 >
 > - Automation ID: `{id}`
 > - Repository: `{owner}/{repo}`
+> - Trigger label: `{trigger_label}`
 > - Review tone: `{tone}`
 > - Polling schedule: `{cron_schedule}`
-> - State file: `~/.openhands/workspaces/automation-state/github_pr_reviewer_{id}.json`
+> - State file: `~/.openhands/workspaces/automation-state/github_pr_reviewer_label_event_{id}.json`
 >
-> The next cron run will discover all currently open PRs and queue reviews.
-> Each PR is reviewed exactly once; state is stored in the JSON file above.
-> To force a re-review of all PRs, delete the state file.
+> Apply the `{trigger_label}` label to a pull request to queue a review. Each
+> label event is processed once. To request another review, remove and re-apply
+> the label.
 
 ---
 
@@ -202,36 +226,41 @@ Tell the user:
 
 Each cron run executes `main.py`, which:
 
-1. **Loads state** from the JSON file (see `references/state-schema.md`).
-2. **Resolves and validates `GITHUB_PERSONAL_ACCESS_TOKEN`** - aborts
-   immediately if absent or invalid.
-3. **Lists all open PRs** in the configured repository.
-4. **For each PR not yet in state**:
-   - Fetches the unified diff via the GitHub API.
-   - Skips PRs whose diff exceeds `MAX_DIFF_LINES_SKIP` (default 5000 lines)
-     and posts an explanatory comment.
-   - Truncates diffs larger than `MAX_DIFF_LINES` (default 500 lines) and
-     notes this in the prompt.
-   - Creates an OpenHands conversation with the PR metadata, diff, and
-     configured tone instructions as the initial message.
-   - Posts an acknowledgement comment on the PR with a link to the conversation.
-   - Records the PR in state with `status: "active"`.
-5. **For each active conversation**:
-   - Skips PRs that have been closed or merged (marks them closed silently).
-   - Checks the conversation's `execution_status`.
-   - When it reaches `idle`, `finished`, `error`, or `stuck`:
-     posts the agent's final response as a GitHub comment and marks the
-     conversation `closed`.
-6. **Saves updated state** and fires the completion callback.
+1. Loads state from the JSON file (see `references/state-schema.md`).
+2. Resolves and validates `GITHUB_PERSONAL_ACCESS_TOKEN` and repository access.
+3. Lists open PRs, newest-updated first.
+4. For each open PR carrying `TRIGGER_LABEL`:
+   - Refetches current PR metadata to avoid acting on stale list data.
+   - Finds the latest matching GitHub `labeled` issue event.
+   - Skips the event if it has already been tracked.
+   - Starts an OpenHands conversation with a review prompt that includes PR
+     metadata, the exact head SHA, label event details, and instructions to
+     clone the repo, inspect PR discussion, review comments, changed files,
+     diff, and surrounding code.
+   - Posts an acknowledgement comment with the label event, head SHA, and
+     conversation link.
+   - Records the label-event review in state with `status: "active"`.
+5. For each active review conversation:
+   - Marks it closed without posting if the PR has closed or merged.
+   - Suppresses stale results if the PR head SHA changed after the review was
+     queued.
+   - When the conversation reaches `idle`, `finished`, `error`, or `stuck`,
+     posts the agent's final response as a GitHub comment and marks the review
+     closed.
+6. Saves state atomically and fires the completion callback.
 
 ---
 
 ## Additional Resources
 
-- **`references/state-schema.md`** - State JSON schema, field definitions,
-  and conversation lifecycle diagram.
-- **`scripts/main.py`** - The complete automation script. Customise the
-  four constants at the top before packaging.
+- **`references/state-schema.md`** - State JSON schema, field definitions, and
+  review lifecycle diagram.
+- **`scripts/main.py`** - The complete automation script. Customize the five
+  constants at the top before packaging.
+- **`scripts/package_upload.py`** - Packages a prepared build directory, writes
+  the tarball to the system temporary directory, and uploads it.
+- **`scripts/create_automation.py`** - Registers the automation from the
+  uploaded tarball metadata.
 
 ---
 
@@ -239,9 +268,9 @@ Each cron run executes `main.py`, which:
 
 | Symptom | Likely cause | Fix |
 |---|---|---|
-| Bot never posts reviews | `GITHUB_PERSONAL_ACCESS_TOKEN` missing or wrong scopes | Verify token; check Step 1 |
-| "Bad credentials" in run logs | Token expired | Rotate and update the secret |
+| Bot never queues reviews | Trigger label not present or no matching `labeled` event | Apply the configured label to the PR |
+| "Bad credentials" in run logs | Token expired | Rotate and update `GITHUB_PERSONAL_ACCESS_TOKEN` |
 | 404 on repo access | Repo name wrong or no access | Re-check `owner/repo` and token permissions |
-| Same PR reviewed twice | State file deleted or corrupted | Check that the state file path is stable across runs |
-| Review never posted | Conversation stuck in `running` | Open the conversation in the OpenHands UI |
-| PR skipped silently | Diff too large | Raise `MAX_DIFF_LINES_SKIP` in the script or split the PR |
+| Same PR not reviewed after new commits | Label event was already processed | Remove and re-apply the trigger label |
+| Review result never posts | Conversation still running or stuck | Open the conversation link from the acknowledgement comment |
+| Stale review suppressed | PR head SHA changed while the agent was reviewing | Re-apply the trigger label after the latest commit |
